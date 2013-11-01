@@ -21,6 +21,9 @@ import static com.android.internal.telephony.ZTEWarpGBRILConstants.*;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.AsyncResult;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.os.Message;
 import android.os.Parcel;
 import android.os.SystemProperties;
@@ -30,7 +33,6 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
-import com.android.internal.telephony.DataCallState;
 import com.android.internal.telephony.dataconnection.DataCallResponse;
 import com.android.internal.telephony.dataconnection.DcFailCause;
 
@@ -40,6 +42,18 @@ import com.android.internal.telephony.uicc.IccCardStatus;
 import java.util.ArrayList;
 
 public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
+    protected HandlerThread mIccThread;
+    protected IccHandler mIccHandler;
+    protected String mAid;
+    protected boolean mUSIM = false;
+    boolean RILJ_LOGV = true;
+    boolean RILJ_LOGD = true;
+    boolean skipCdmaSubcription = needsOldRilFeature("skipCdmaSubcription");
+
+    private final int RIL_INT_RADIO_OFF = 0;
+    private final int RIL_INT_RADIO_UNAVALIABLE = 1;
+    private final int RIL_INT_RADIO_ON = 2;
+    private final int RIL_INT_RADIO_ON_NG = 10;
 
     public ZTEWarpGBQualcommRIL(Context context, int networkMode, int cdmaSubscription) {
         super(context, networkMode, cdmaSubscription);
@@ -53,21 +67,9 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
         IccCardStatus status = new IccCardStatus();
         status.setCardState(p.readInt());
         status.setUniversalPinState(p.readInt());
-
-        int num_current_3gpp_indexes = p.readInt();
-        for (int i = 0; i < num_current_3gpp_indexes; i++) {
-            if (i == 0)
-                status.mGsmUmtsSubscriptionAppIndex = p.readInt();
-            else
-                p.readInt();
-        }
-        int num_current_3gpp2_indexes = p.readInt();
-        for (int i = 0; i < num_current_3gpp2_indexes; i++) {
-            if (i == 0)
-                status.mCdmaSubscriptionAppIndex = p.readInt();
-            else
-                p.readInt();
-        }
+        status.mGsmUmtsSubscriptionAppIndex = p.readInt();
+        status.mCdmaSubscriptionAppIndex = p.readInt();
+        status.mImsSubscriptionAppIndex = p.readInt();
 
         int numApplications = p.readInt();
 
@@ -77,17 +79,43 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
         }
         status.mApplications = new IccCardApplicationStatus[numApplications];
 
-        for (int i = 0 ; i < numApplications ; i++) {
+        for (int i = 0; i < numApplications; i++) {
             ca = new IccCardApplicationStatus();
-            ca.app_type       = ca.AppTypeFromRILInt(p.readInt());
-            ca.app_state      = ca.AppStateFromRILInt(p.readInt());
+            ca.app_type = ca.AppTypeFromRILInt(p.readInt());
+            ca.app_state = ca.AppStateFromRILInt(p.readInt());
             ca.perso_substate = ca.PersoSubstateFromRILInt(p.readInt());
-            ca.aid            = p.readString();
-            ca.app_label      = p.readString();
-            ca.pin1_replaced  = p.readInt();
-            ca.pin1           = ca.PinStateFromRILInt(p.readInt());
-            ca.pin2           = ca.PinStateFromRILInt(p.readInt());
+            ca.aid = p.readString();
+            ca.app_label = p.readString();
+            ca.pin1_replaced = p.readInt();
+            ca.pin1 = ca.PinStateFromRILInt(p.readInt());
+            ca.pin2 = ca.PinStateFromRILInt(p.readInt());
+            if (!needsOldRilFeature("skippinpukcount")) {
+                p.readInt(); //remaining_count_pin1
+                p.readInt(); //remaining_count_puk1
+                p.readInt(); //remaining_count_pin2
+                p.readInt(); //remaining_count_puk2
+            }
             status.mApplications[i] = ca;
+        }
+        int appIndex = -1;
+        if (mPhoneType == RILConstants.CDMA_PHONE && !skipCdmaSubcription) {
+            appIndex = status.mCdmaSubscriptionAppIndex;
+            Log.d(LOG_TAG, "This is a CDMA PHONE " + appIndex);
+        } else {
+            appIndex = status.mGsmUmtsSubscriptionAppIndex;
+            Log.d(LOG_TAG, "This is a GSM PHONE " + appIndex);
+        }
+
+        if (numApplications > 0) {
+            IccCardApplicationStatus application = status.mApplications[appIndex];
+            mAid = application.aid;
+            mUSIM = application.app_type
+                      == IccCardApplicationStatus.AppType.APPTYPE_USIM;
+            mSetPreferredNetworkType = mPreferredNetworkType;
+
+            if (TextUtils.isEmpty(mAid))
+               mAid = "";
+            Log.d(LOG_TAG, "mAid " + mAid);
         }
 
         return status;
@@ -95,14 +123,16 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
 
     @Override
     public void
-    iccIOForApp (int command, int fileid, String path, int p1, int p2, int p3,
-            String data, String pin2, String aid, Message result) {
+    iccIO (int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, Message result) {
         //Note: This RIL request has not been renamed to ICC,
         //       but this request is also valid for SIM and RUIM
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SIM_IO, result);
 
-        rr.mParcel.writeString(aid);
+        if (mUSIM)
+            path = path.replaceAll("7F20$","7FFF");
+
         rr.mParcel.writeInt(command);
         rr.mParcel.writeInt(fileid);
         rr.mParcel.writeString(path);
@@ -111,109 +141,37 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
         rr.mParcel.writeInt(p3);
         rr.mParcel.writeString(data);
         rr.mParcel.writeString(pin2);
+        rr.mParcel.writeString(mAid);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: "
-                + requestToString(rr.mRequest)
-                + " 0x" + Integer.toHexString(command)
-                + " 0x" + Integer.toHexString(fileid) + " "
-                + " path: " + path + ","
-                + p1 + "," + p2 + "," + p3
-                + " aid: " + aid);
+                    + " aid: " + mAid + " "
+                    + requestToString(rr.mRequest)
+                    + " 0x" + Integer.toHexString(command)
+                    + " 0x" + Integer.toHexString(fileid) + " "
+                    + " path: " + path + ","
+                    + p1 + "," + p2 + "," + p3);
 
         send(rr);
-    }
-
-    @Override
-    public void
-    supplyIccPinForApp(String pin, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_SIM_PIN, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(pin);
-
-        send(rr);
+    }  
+    
+    @Override public void
+    supplyIccPin2(String pin, Message result) {
+        supplyIccPin2ForApp(pin, mAid, result);
     }
 
     @Override public void
-    supplyIccPukForApp(String puk, String newPin, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_SIM_PUK, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(puk);
-        rr.mParcel.writeString(newPin);
-
-        send(rr);
+    changeIccPin2(String oldPin2, String newPin2, Message result) {
+        changeIccPin2ForApp(oldPin2, newPin2, mAid, result);
     }
 
-    @Override
-    public void
-    supplyIccPin2ForApp(String pin, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_SIM_PIN2, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(pin);
-
-        send(rr);
+    @Override public void
+    supplyIccPuk(String puk, String newPin, Message result) {
+        supplyIccPukForApp(puk, newPin, mAid, result);
     }
 
-    @Override
-    public void
-    supplyIccPuk2ForApp(String puk, String newPin2, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ENTER_SIM_PUK2, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(puk);
-        rr.mParcel.writeString(newPin2);
-
-        send(rr);
-    }
-
-    @Override
-    public void
-    changeIccPinForApp(String oldPin, String newPin, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_CHANGE_SIM_PIN, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(oldPin);
-        rr.mParcel.writeString(newPin);
-
-        send(rr);
-    }
-
-    @Override
-    public void
-    changeIccPin2ForApp(String oldPin2, String newPin2, String aid, Message result) {
-        //Note: This RIL request has not been renamed to ICC,
-        //       but this request is also valid for SIM and RUIM
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_CHANGE_SIM_PIN2, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        rr.mParcel.writeString(aid);
-        rr.mParcel.writeString(oldPin2);
-        rr.mParcel.writeString(newPin2);
-
-        send(rr);
+    @Override public void
+    supplyIccPuk2(String puk2, String newPin2, Message result) {
+        supplyIccPuk2ForApp(puk2, newPin2, mAid, result);
     }
 
     @Override
@@ -231,62 +189,33 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
 
     @Override
     public void
-    getIMSIForApp(String aid, Message result) {
+    getIMSI(Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_IMSI, result);
 
-        rr.mParcel.writeString(aid);
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeString(mAid);
 
         if (RILJ_LOGD) riljLog(rr.serialString() +
-                              "> getIMSI: " + requestToString(rr.mRequest)
-                              + " aid: " + aid);
+                              "> getIMSI:RIL_REQUEST_GET_IMSI " +
+                              RIL_REQUEST_GET_IMSI +
+                              " aid: " + mAid +
+                              " " + requestToString(rr.mRequest));
 
         send(rr);
     }
 
     @Override
     public void
-    queryFacilityLockForApp(String facility, String password, int serviceClass, String aid,
+    queryFacilityLock(String facility, String password, int serviceClass,
                             Message response) {
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_FACILITY_LOCK, response);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        // count strings
-        rr.mParcel.writeInt(4);
-
-        rr.mParcel.writeString(aid);
-
-        rr.mParcel.writeString(facility);
-        rr.mParcel.writeString(password);
-
-        rr.mParcel.writeString(Integer.toString(serviceClass));
-
-        send(rr);
+        queryFacilityLockForApp(facility, password, serviceClass, mAid, response);
     }
 
     @Override
     public void
-    setFacilityLockForApp(String facility, boolean lockState, String password,
-                        int serviceClass, String aid, Message response) {
-        String lockString;
-         RILRequest rr
-                = RILRequest.obtain(RIL_REQUEST_SET_FACILITY_LOCK, response);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        // count strings
-        rr.mParcel.writeInt(5);
-
-        rr.mParcel.writeString(aid);
-
-        rr.mParcel.writeString(facility);
-        lockString = (lockState)?"1":"0";
-        rr.mParcel.writeString(lockString);
-        rr.mParcel.writeString(password);
-        rr.mParcel.writeString(Integer.toString(serviceClass));
-
-        send(rr);
-
+    setFacilityLock (String facility, boolean lockState, String password,
+                        int serviceClass, Message response) {
+        setFacilityLockForApp(facility, lockState, password, serviceClass, mAid, response);
     }
 
     @Override
@@ -648,7 +577,7 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
                 if (RILJ_LOGD) unsljLogRet(response, ret);
 
                 boolean oldRil = needsOldRilFeature("skipbrokendatacall");
-                if (oldRil && "IP".equals(((ArrayList<DataCallState>)ret).get(0).type))
+                if (oldRil && "IP".equals(((ArrayList<DataCallResponse>)ret).get(0).type))
                     break;
 
                 mDataNetworkStateRegistrants.notifyRegistrants(new AsyncResult(null, ret, null));
@@ -887,6 +816,147 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
         }
     }
 
+    private void setRadioStateFromRILInt (int stateCode) {
+        CommandsInterface.RadioState radioState;
+        HandlerThread handlerThread;
+        Looper looper;
+        IccHandler iccHandler;
+
+        switch (stateCode) {
+            case RIL_INT_RADIO_OFF:
+                radioState = CommandsInterface.RadioState.RADIO_OFF;
+                if (mIccHandler != null) {
+                    mIccThread = null;
+                    mIccHandler = null;
+                }
+                break;
+            case RIL_INT_RADIO_UNAVALIABLE:
+                radioState = CommandsInterface.RadioState.RADIO_UNAVAILABLE;
+                break;
+            case RIL_INT_RADIO_ON:
+            case RIL_INT_RADIO_ON_NG:
+                if (mIccHandler == null) {
+                    handlerThread = new HandlerThread("IccHandler");
+                    mIccThread = handlerThread;
+
+                    mIccThread.start();
+
+                    looper = mIccThread.getLooper();
+                    mIccHandler = new IccHandler(this,looper);
+                    mIccHandler.run();
+                }
+                radioState = CommandsInterface.RadioState.RADIO_ON;
+                break;
+            default:
+                throw new RuntimeException("Unrecognized RIL_RadioState: " + stateCode);
+        }
+
+        setRadioState (radioState);
+    }
+
+    class IccHandler extends Handler implements Runnable {
+        private static final int EVENT_RADIO_ON = 1;
+        private static final int EVENT_ICC_STATUS_CHANGED = 2;
+        private static final int EVENT_GET_ICC_STATUS_DONE = 3;
+        private static final int EVENT_RADIO_OFF_OR_UNAVAILABLE = 4;
+
+        private RIL mRil;
+        private boolean mRadioOn = false;
+
+        public IccHandler (RIL ril, Looper looper) {
+            super (looper);
+            mRil = ril;
+        }
+
+        public void handleMessage (Message paramMessage) {
+            switch (paramMessage.what) {
+                case EVENT_RADIO_ON:
+                    mRadioOn = true;
+                    Log.d(LOG_TAG, "Radio on -> Forcing sim status update");
+                    sendMessage(obtainMessage(EVENT_ICC_STATUS_CHANGED));
+                    break;
+                case EVENT_GET_ICC_STATUS_DONE:
+                    AsyncResult asyncResult = (AsyncResult) paramMessage.obj;
+                    if (asyncResult.exception != null) {
+                        Log.e (LOG_TAG, "IccCardStatusDone shouldn't return exceptions!", asyncResult.exception);
+                        break;
+                    }
+                    IccCardStatus status = (IccCardStatus) asyncResult.result;
+                    if (status.mApplications == null || status.mApplications.length == 0) {
+                        if (!mRil.getRadioState().isOn()) {
+                            break;
+                        }
+
+                        mRil.setRadioState(CommandsInterface.RadioState.RADIO_ON);
+                    } else {
+                        int appIndex = -1;
+                        if (mPhoneType == RILConstants.CDMA_PHONE && !skipCdmaSubcription) {
+                            appIndex = status.mCdmaSubscriptionAppIndex;
+                            Log.d(LOG_TAG, "This is a CDMA PHONE " + appIndex);
+                        } else {
+                            appIndex = status.mGsmUmtsSubscriptionAppIndex;
+                            Log.d(LOG_TAG, "This is a GSM PHONE " + appIndex);
+                        }
+
+                        IccCardApplicationStatus application = status.mApplications[appIndex];
+                        IccCardApplicationStatus.AppState app_state = application.app_state;
+                        IccCardApplicationStatus.AppType app_type = application.app_type;
+
+                        switch (app_state) {
+                            case APPSTATE_PIN:
+                            case APPSTATE_PUK:
+                                switch (app_type) {
+                                    case APPTYPE_SIM:
+                                    case APPTYPE_USIM:
+                                    case APPTYPE_RUIM:
+                                        mRil.setRadioState(CommandsInterface.RadioState.RADIO_ON);
+                                        break;
+                                    default:
+                                        Log.e(LOG_TAG, "Currently we don't handle SIMs of type: " + app_type);
+                                        return;
+                                }
+                                break;
+                            case APPSTATE_READY:
+                                switch (app_type) {
+                                    case APPTYPE_SIM:
+                                    case APPTYPE_USIM:
+                                    case APPTYPE_RUIM:
+                                        mRil.setRadioState(CommandsInterface.RadioState.RADIO_ON);
+                                        break;
+                                    default:
+                                        Log.e(LOG_TAG, "Currently we don't handle SIMs of type: " + app_type);
+                                        return;
+                                }
+                                break;
+                            default:
+                                return;
+                        }
+                    }
+                    break;
+                case EVENT_ICC_STATUS_CHANGED:
+                    if (mRadioOn) {
+                        Log.d(LOG_TAG, "Received EVENT_ICC_STATUS_CHANGED, calling getIccCardStatus");
+                         mRil.getIccCardStatus(obtainMessage(EVENT_GET_ICC_STATUS_DONE, paramMessage.obj));
+                    } else {
+                         Log.d(LOG_TAG, "Received EVENT_ICC_STATUS_CHANGED while radio is not ON. Ignoring");
+                    }
+                    break;
+                case EVENT_RADIO_OFF_OR_UNAVAILABLE:
+                    mRadioOn = false;
+                    // disposeCards(); // to be verified;
+                default:
+                    Log.e(LOG_TAG, " Unknown Event " + paramMessage.what);
+                    break;
+            }
+        }
+
+        public void run () {
+            mRil.registerForIccStatusChanged(this, EVENT_ICC_STATUS_CHANGED, null);
+            Message msg = obtainMessage(EVENT_RADIO_ON);
+            mRil.getIccCardStatus(msg);
+        }
+    }
+
     @Override
     public void
     setupDataCall(String radioTechnology, String profile, String apn,
@@ -911,38 +981,6 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
                 + password + " " + authType + " " + protocol);
 
         send(rr);
-    }
-
-    @Override
-    protected Object
-    responseSetupDataCall(Parcel p) {
-        DataCallState dataCall = new DataCallState();
-        String response[] = (String []) responseStrings(p);
-
-        if (response.length >= 2)
-        {
-            dataCall = new DataCallState();
-            dataCall.version = 3;
-            dataCall.cid = Integer.parseInt(response[0]);
-            dataCall.ifname = response[1];
-            if (TextUtils.isEmpty(dataCall.ifname)) {
-                throw new RuntimeException(
-                        "RIL_REQUEST_SETUP_DATA_CALL response, no ifname");
-            }
-            String addresses = response[2];
-            if (!TextUtils.isEmpty(addresses)) {
-                dataCall.addresses = addresses.split(" ");
-            }
-
-            dataCall.dnses = new String[2];
-            dataCall.dnses[0] = SystemProperties.get("net."+dataCall.ifname+".dns1");
-            dataCall.dnses[1] = SystemProperties.get("net."+dataCall.ifname+".dns2");
-        }
-        else
-        {
-            dataCall.status = DcFailCause.ERROR_UNSPECIFIED.getErrorCode();
-        }
-        return dataCall;
     }
 
     @Override
@@ -981,21 +1019,64 @@ public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
     }
 
     @Override
+    public void setCurrentPreferredNetworkType() {
+        if (RILJ_LOGD) riljLog("setCurrentPreferredNetworkType: " + mSetPreferredNetworkType);
+        setPreferredNetworkType(mSetPreferredNetworkType, null);
+    }
+
+    @Override
+    public void setPreferredNetworkType(int networkType , Message response) {
+        /**
+          * If not using a USIM, ignore LTE mode and go to 3G
+          */
+        if (!mUSIM && networkType == RILConstants.NETWORK_MODE_LTE_GSM_WCDMA &&
+                 mSetPreferredNetworkType >= RILConstants.NETWORK_MODE_WCDMA_PREF) {
+            networkType = RILConstants.NETWORK_MODE_WCDMA_PREF;
+        }
+        mSetPreferredNetworkType = networkType;
+
+        super.setPreferredNetworkType(networkType, response);
+    }
+
+        @Override
     protected Object
     responseSignalStrength(Parcel p) {
         int numInts = 12;
         int response[];
 
+        boolean oldRil = needsOldRilFeature("signalstrength");
+        boolean noLte = false;
+
         /* TODO: Add SignalStrength class to match RIL_SignalStrength */
         response = new int[numInts];
         for (int i = 0 ; i < numInts ; i++) {
-            if (i > 6 && i < 12) {
+            if ((oldRil || noLte) && i > 6 && i < 12) {
                 response[i] = -1;
             } else {
                 response[i] = p.readInt();
             }
+            if (i == 7 && response[i] == 99) {
+                response[i] = -1;
+                noLte = true;
+            }
         }
-
         return new SignalStrength(response[0], response[1], response[2], response[3], response[4], response[5], response[6], response[7],response[8], response[9], response[10], response[11], true);
+    }
+
+    @Override
+    public void
+    setNetworkSelectionModeManual(String operatorNumeric, Message response) {
+        RILRequest rr
+                = RILRequest.obtain(RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL,
+                                    response);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                    + " " + operatorNumeric);
+
+        rr.mParcel.writeInt(2);
+        rr.mParcel.writeString(operatorNumeric);
+        rr.mParcel.writeString("NOCHANGE");
+
+        send(rr);
     }
 }
