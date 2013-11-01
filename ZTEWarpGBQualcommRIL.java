@@ -16,7 +16,7 @@
 
 package com.android.internal.telephony;
 
-import static com.android.internal.telephony.GBRILConstants.*;
+import static com.android.internal.telephony.ZTEWarpGBRILConstants.*;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -30,13 +30,18 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
-import com.android.internal.telephony.DataConnection.FailCause;
+import com.android.internal.telephony.DataCallState;
+import com.android.internal.telephony.dataconnection.DataCallResponse;
+import com.android.internal.telephony.dataconnection.DcFailCause;
+
+import com.android.internal.telephony.uicc.IccCardApplicationStatus;
+import com.android.internal.telephony.uicc.IccCardStatus;
 
 import java.util.ArrayList;
 
-public class GBQualcommRIL extends RIL implements CommandsInterface {
+public class ZTEWarpGBQualcommRIL extends RIL implements CommandsInterface {
 
-    public GBQualcommRIL(Context context, int networkMode, int cdmaSubscription) {
+    public ZTEWarpGBQualcommRIL(Context context, int networkMode, int cdmaSubscription) {
         super(context, networkMode, cdmaSubscription);
     }
 
@@ -97,15 +102,15 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SIM_IO, result);
 
-        rr.mp.writeString(aid);
-        rr.mp.writeInt(command);
-        rr.mp.writeInt(fileid);
-        rr.mp.writeString(path);
-        rr.mp.writeInt(p1);
-        rr.mp.writeInt(p2);
-        rr.mp.writeInt(p3);
-        rr.mp.writeString(data);
-        rr.mp.writeString(pin2);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeInt(command);
+        rr.mParcel.writeInt(fileid);
+        rr.mParcel.writeString(path);
+        rr.mParcel.writeInt(p1);
+        rr.mParcel.writeInt(p2);
+        rr.mParcel.writeInt(p3);
+        rr.mParcel.writeString(data);
+        rr.mParcel.writeString(pin2);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: "
                 + requestToString(rr.mRequest)
@@ -127,8 +132,8 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(pin);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(pin);
 
         send(rr);
     }
@@ -141,9 +146,9 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(puk);
-        rr.mp.writeString(newPin);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(puk);
+        rr.mParcel.writeString(newPin);
 
         send(rr);
     }
@@ -157,8 +162,8 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(pin);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(pin);
 
         send(rr);
     }
@@ -172,9 +177,9 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(puk);
-        rr.mp.writeString(newPin2);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(puk);
+        rr.mParcel.writeString(newPin2);
 
         send(rr);
     }
@@ -188,9 +193,9 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(oldPin);
-        rr.mp.writeString(newPin);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(oldPin);
+        rr.mParcel.writeString(newPin);
 
         send(rr);
     }
@@ -204,9 +209,9 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeString(aid);
-        rr.mp.writeString(oldPin2);
-        rr.mp.writeString(newPin2);
+        rr.mParcel.writeString(aid);
+        rr.mParcel.writeString(oldPin2);
+        rr.mParcel.writeString(newPin2);
 
         send(rr);
     }
@@ -218,8 +223,8 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
-        rr.mp.writeInt(3);
-        rr.mp.writeString(netpin);
+        rr.mParcel.writeInt(3);
+        rr.mParcel.writeString(netpin);
 
         send(rr);
     }
@@ -229,7 +234,7 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
     getIMSIForApp(String aid, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_IMSI, result);
 
-        rr.mp.writeString(aid);
+        rr.mParcel.writeString(aid);
 
         if (RILJ_LOGD) riljLog(rr.serialString() +
                               "> getIMSI: " + requestToString(rr.mRequest)
@@ -247,14 +252,14 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         // count strings
-        rr.mp.writeInt(4);
+        rr.mParcel.writeInt(4);
 
-        rr.mp.writeString(aid);
+        rr.mParcel.writeString(aid);
 
-        rr.mp.writeString(facility);
-        rr.mp.writeString(password);
+        rr.mParcel.writeString(facility);
+        rr.mParcel.writeString(password);
 
-        rr.mp.writeString(Integer.toString(serviceClass));
+        rr.mParcel.writeString(Integer.toString(serviceClass));
 
         send(rr);
     }
@@ -270,15 +275,15 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         // count strings
-        rr.mp.writeInt(5);
+        rr.mParcel.writeInt(5);
 
-        rr.mp.writeString(aid);
+        rr.mParcel.writeString(aid);
 
-        rr.mp.writeString(facility);
+        rr.mParcel.writeString(facility);
         lockString = (lockState)?"1":"0";
-        rr.mp.writeString(lockString);
-        rr.mp.writeString(password);
-        rr.mp.writeString(Integer.toString(serviceClass));
+        rr.mParcel.writeString(lockString);
+        rr.mParcel.writeString(password);
+        rr.mParcel.writeString(Integer.toString(serviceClass));
 
         send(rr);
 
@@ -482,7 +487,7 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
 
             case RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED: ret =  responseVoid(p); break;
             case RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED: ret =  responseVoid(p); break;
-            case RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED: ret =  responseVoid(p); break;
+            case RIL_UNSOL_RESPONSE_NETWORK_STATE_CHANGED: ret =  responseVoid(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS: ret =  responseString(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS_STATUS_REPORT: ret =  responseString(p); break;
             case RIL_UNSOL_RESPONSE_NEW_SMS_ON_SIM: ret =  responseInts(p); break;
@@ -540,7 +545,7 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
                 mCallStateRegistrants
                     .notifyRegistrants(new AsyncResult(null, null, null));
             break;
-            case RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED:
+            case RIL_UNSOL_RESPONSE_NETWORK_STATE_CHANGED:
                 if (RILJ_LOGD) unsljLog(response);
 
                 mVoiceNetworkStateRegistrants
@@ -890,15 +895,15 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
         RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SETUP_DATA_CALL, result);
 
-        rr.mp.writeInt(7);
+        rr.mParcel.writeInt(7);
 
-        rr.mp.writeString(radioTechnology);
-        rr.mp.writeString(profile);
-        rr.mp.writeString(apn);
-        rr.mp.writeString(user);
-        rr.mp.writeString(password);
-        rr.mp.writeString(authType);
-        rr.mp.writeString("IP"); // ipVersion
+        rr.mParcel.writeString(radioTechnology);
+        rr.mParcel.writeString(profile);
+        rr.mParcel.writeString(apn);
+        rr.mParcel.writeString(user);
+        rr.mParcel.writeString(password);
+        rr.mParcel.writeString(authType);
+        rr.mParcel.writeString("IP"); // ipVersion
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> "
                 + requestToString(rr.mRequest) + " " + radioTechnology + " "
@@ -906,22 +911,6 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
                 + password + " " + authType + " " + protocol);
 
         send(rr);
-    }
-
-    @Override
-    protected Object
-    responseDataCallList(Parcel p) {
-        ArrayList<DataCallState> response;
-        int ver = 3;
-        int num = p.readInt();
-        riljLog("responseDataCallList ver=" + ver + " num=" + num);
-
-        response = new ArrayList<DataCallState>(num);
-        for (int i = 0; i < num; i++) {
-            response.add(getDataCallState(p, ver));
-        }
-
-        return response;
     }
 
     @Override
@@ -951,14 +940,14 @@ public class GBQualcommRIL extends RIL implements CommandsInterface {
         }
         else
         {
-            dataCall.status = FailCause.ERROR_UNSPECIFIED.getErrorCode();
+            dataCall.status = DcFailCause.ERROR_UNSPECIFIED.getErrorCode();
         }
         return dataCall;
     }
 
     @Override
-    protected DataCallState getDataCallState(Parcel p, int version) {
-        DataCallState dataCall = new DataCallState();
+    protected DataCallResponse getDataCallResponse(Parcel p, int version) {
+        DataCallResponse dataCall = new DataCallResponse();
 
         dataCall.version = version;
         dataCall.cid = p.readInt();

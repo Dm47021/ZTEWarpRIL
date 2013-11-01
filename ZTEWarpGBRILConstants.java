@@ -27,7 +27,7 @@ package com.android.internal.telephony;
 /**
  * {@hide}
  */
-public interface GBRILConstants {
+public interface ZTEWarpGBRILConstants {
     // From the top of ril.cpp
     int RIL_ERRNO_INVALID_RESPONSE = -1;
 
@@ -142,7 +142,7 @@ cat include/telephony/ril.h | \
     /**
      * Block packet data access due to restriction.
      */
-    int RIL_RESTRICTED_STATE_PS_ALL = 0x10;
+    int RIL_RESTRICTED_STATE_PS_ALL = 0x16; // DM CHANGE FOR ZTE WARP
 
     /** Data profile for RIL_REQUEST_SETUP_DATA_CALL */
     public static final int DATA_PROFILE_DEFAULT   = 0;
@@ -266,7 +266,7 @@ cat include/telephony/ril.h | \
     int RIL_UNSOL_RESPONSE_BASE = 1000;
     int RIL_UNSOL_RESPONSE_RADIO_STATE_CHANGED = 1000;
     int RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED = 1001;
-    int RIL_UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED = 1002;
+    int RIL_UNSOL_RESPONSE_NETWORK_STATE_CHANGED = 1002;
     int RIL_UNSOL_RESPONSE_NEW_SMS = 1003;
     int RIL_UNSOL_RESPONSE_NEW_SMS_STATUS_REPORT = 1004;
     int RIL_UNSOL_RESPONSE_NEW_SMS_ON_SIM = 1005;
@@ -298,7 +298,6 @@ cat include/telephony/ril.h | \
     int RIL_UNSOL_CDMA_SUBSCRIPTION_SOURCE_CHANGED = 1031;
     int RIL_UNSOL_CDMA_PRL_CHANGED = 1032;
     int RIL_UNSOL_EXIT_EMERGENCY_CALLBACK_MODE = 1033;
-    //int RIL_UNSOL_RIL_CONNECTED = 1034;
     int RIL_UNSOL_VOICE_RADIO_TECH_CHANGED = 1034;
     int RIL_UNSOL_STK_SEND_SMS_RESULT = 11002; /* Samsung specific */
     int RIL_UNSOL_RESPONSE_IMS_NETWORK_STATE_CHANGED = 1035;
